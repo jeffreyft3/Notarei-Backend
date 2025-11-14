@@ -1,0 +1,10 @@
+eventregistry
+python-dotenv
+flask
+pymongo
+flask-cors
+requests
+hashlib
+urllib
+re
+datetime
