@@ -1,10 +1,20 @@
-eventregistry
 python-dotenv
+# Database
+pymongo[srv]
+# Core Framework
 flask
-pymongo
 flask-cors
 requests
 hashlib
 urllib
 re
 datetime
+gunicorn
+# News API
+eventregistry
+
+
+pymongo[srv]==4.6.1
+
+# Authentication
+python-jose[cryptography]
