@@ -6,7 +6,7 @@ flask
 flask-cors
 requests
 gunicorn
-gevent
+gevent>=22.10.1
 # News API
 eventregistry
 
