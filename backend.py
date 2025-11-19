@@ -12,17 +12,24 @@ from lib.utils import normalize_url_for_hashing, generate_article_id, sentence_s
 from eventregistry import EventRegistry, QueryArticlesIter
 from lib.auth import requires_auth
 # from auth import get_authenticated_user, userCollection
-
+from bson import ObjectId
 
 if os.path.exists(".env.local"):
     load_dotenv(dotenv_path=".env.local")
 else:
     load_dotenv()  # fallback to .env
 app = Flask(__name__)
-CORS(app)
+CORS(app,
+     resources={r"/*": {
+         "origins": ["http://localhost:3000"],
+         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+         "allow_headers": ["Authorization", "Content-Type"],
+         "supports_credentials": True
+     }})
+
 # client = MongoClient(os.getenv("MONGODB_URI"))
 
-
+print("Backend started", flush=True)
 
 
 # cluster = 
@@ -35,7 +42,7 @@ sentencesCollection = db.sentences
 sentenceCollection = db.sentences 
 rawArticleCollection = db.rawArticles 
 cleanArticleCollection = db.cleanArticles 
-userCollection = db.user
+userCollection = db.users
 
 
 
@@ -58,39 +65,69 @@ userCollection = db.user
 #   "time_per_annotation_avg": float
 # }
 
-@app.route("/user/get", methods=["GET"])
-@requires_auth
-def get_user():
-  """Return the current user's profile and stats."""
-  user_sub = g.user.get("sub")
-  if not user_sub:
-    return jsonify({"error": "No user_id (sub) in JWT."}), 401
-  user_doc = userCollection.find_one({"user_id": user_sub})
-  if not user_doc:
-    # Optionally, create a new user record on first login
-    user_doc = {
-      "user_id": user_sub,
-      "email": g.user.get("email"),
-      "name": g.user.get("name"),
-      "role": "annotator",  # default role
-      "created_at": datetime.utcnow(),
-      "last_active_at": datetime.utcnow(),
-      "is_active": True,
-      "completed_annotations": [],
-      "completed_pairings": [],
-      "current_pairings": [],
-      "pairings_under_review": [],
-      "annotations_count": 0,
-      "average_session_length": 0.0,
-      "time_per_annotation_avg": 0.0
-    }
-    userCollection.insert_one(user_doc)
-  else:
-    # Update last_active_at on each get
-    userCollection.update_one({"user_id": user_sub}, {"$set": {"last_active_at": datetime.utcnow()}})
-  if "_id" in user_doc:
-    user_doc["_id"] = str(user_doc["_id"])
-  return jsonify({"user": user_doc}), 200
+@app.route("/user/get", methods=["POST", "GET", "OPTIONS"])
+# @requires_auth
+def get_or_create_user():
+    """Handle user creation or retrieval."""
+    if request.method == "OPTIONS":
+        # Handle preflight requests
+        return jsonify(success=True)
+
+    # When @requires_auth is disabled for development, get data from request body
+    if not hasattr(g, 'user'):
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body must be JSON"}), 400
+        
+        user_sub = data.get("auth0_id")
+        user_email = data.get("email")
+        user_name = data.get("name") # Or derive from email
+    else:
+        # When @requires_auth is enabled, use the validated JWT payload
+        user_sub = g.user.get("sub")
+        user_email = g.user.get("email")
+        user_name = g.user.get("name")
+
+    if not user_sub:
+        return jsonify({"error": "No user_id (sub/auth0_id) provided."}), 400
+
+    print("Fetching user with sub:", user_sub)
+    user_doc = userCollection.find_one({"user_id": user_sub})
+    print("Fetched user document:", user_doc)
+
+    if not user_doc:
+        # Create a new user record on first login
+        user_doc = {
+            "user_id": user_sub,
+            "email": user_email,
+            "name": user_name,
+            "role": "annotator",  # default role
+            "created_at": datetime.now(),
+            "last_active_at": datetime.now(),
+            "is_active": True,
+            "completed_annotations": [],
+            "completed_pairings": [],
+            "current_pairings": [],
+            "pairings_under_review": [],
+            "annotations_count": 0,
+            "average_session_length": 0.0,
+            "time_per_annotation_avg": 0.0
+        }
+        userCollection.insert_one(user_doc)
+        print("Created new user document:", user_doc)
+        
+        # Convert ObjectId for the response
+        if "_id" in user_doc:
+            user_doc["_id"] = str(user_doc["_id"])
+        return jsonify({"response": "New user created!", "user": user_doc}), 201
+    else:
+        # Update last_active_at on each request
+        userCollection.update_one({"user_id": user_sub}, {"$set": {"last_active_at": datetime.now()}})
+
+    if "_id" in user_doc:
+        user_doc["_id"] = str(user_doc["_id"])
+
+    return jsonify({"user": user_doc}), 200
 
 # print("MongoDB connected:", bool(db), "DB:", db)
 
@@ -169,11 +206,11 @@ def _run_ingest(query: dict, max_items: int = 300):
 
       # Store the dedupe key in 'uri' field used by upsert
       doc["uri"] = key
-      doc["ingestedAt"] = datetime.utcnow().isoformat()
+      doc["ingestedAt"] = datetime.now().isoformat()
 
       res = rawArticleCollection.update_one(
         {"uri": key},
-        {"$set": doc, "$setOnInsert": {"createdAt": datetime.utcnow().isoformat()}},
+        {"$set": doc, "$setOnInsert": {"createdAt": datetime.now().isoformat()}},
         upsert=True,
       )
       if res.upserted_id is not None:
@@ -198,7 +235,7 @@ def _build_query_for_last_day(location_uri: str = "http://en.wikipedia.org/wiki/
   Inputs: location_uri (str), lang (str)
   Output: dict suitable for QueryArticlesIter.initWithComplexQuery
   """
-  today = datetime.utcnow().date()
+  today = datetime.now().date()
   yesterday = today - timedelta(days=1)
   return {
     "$query": {
@@ -258,7 +295,7 @@ def ingest_latest_articles():
   if not os.getenv("NEWSAPI_KEY"):
     return jsonify({"error": "EventRegistry API key not configured (NEWSAPI_KEY)."}), 500
 
-  today = datetime.utcnow().date()
+  today = datetime.now().date()
   date_start = request.args.get("dateStart", (today - timedelta(days=7)).isoformat())
   date_end = request.args.get("dateEnd", today.isoformat())
   location_uri = request.args.get("locationUri", "http://en.wikipedia.org/wiki/United_States")
@@ -294,7 +331,7 @@ def ingest_latest_us():
   if not os.getenv("NEWSAPI_KEY"):
     return jsonify({"error": "EventRegistry API key not configured (NEWSAPI_KEY)."}), 500
 
-  today = datetime.utcnow().date()
+  today = datetime.now().date()
   # Default to last 1 day for 'latest'
   default_start = (today - timedelta(days=1)).isoformat()
   default_end = today.isoformat()
@@ -335,7 +372,7 @@ def get_articles():
     for article in articles:
       if "_id" in article:
         article["_id"] = str(article["_id"])
-    return jsonify({"articles": articles, "count": len(articles)}), 200
+    return jsonify({"articles": articles[:50], "full_count": len(articles)}), 200
   except Exception as e:
     print("Error fetching articles:", str(e))
     return jsonify({"error": "failed to fetch articles", "details": str(e)}), 500
@@ -428,6 +465,10 @@ def get_articles():
 #   except Exception as e:
 #     print("Error fetching articles:", str(e))
 #     return jsonify({"error": "failed to fetch articles", "details": str(e)}), 500
+
+
+# Removed @app.after_request CORS handler to avoid conflicts with flask_cors
+# The CORS configuration is handled by the CORS() initialization above
 
 
 if __name__ == '__main__':
