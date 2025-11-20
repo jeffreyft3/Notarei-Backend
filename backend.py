@@ -363,26 +363,61 @@ def ingest_latest_us():
 
 @app.route("/articles", methods=["GET"])
 def get_articles():
-  # GET /articles - Return all articles from rawArticles.
+  """GET /articles - Return articles from the last day based on published_at field."""
   if rawArticleCollection is None:
     return jsonify({"error": "MongoDB not configured (MONGODB_URI/MONGODB_DB)."}), 500
   try:
-    articles = list(rawArticleCollection.find())
-    print(len(articles))
+    # Calculate timestamp for 24 hours ago
+    one_day_ago = datetime.now() - timedelta(days=1)
+    one_day_ago_str = one_day_ago.isoformat()
+    
+    # Query for articles published in the last day
+    # Support both ISO string and datetime formats
+    query = {
+      "$or": [
+        {"date": {"$gte": one_day_ago_str}},
+        {"dateTime": {"$gte": one_day_ago_str}},
+        {"published_at": {"$gte": one_day_ago_str}}
+      ]
+    }
+    
+    articles = list(rawArticleCollection.find(query).sort("dateTime", -1))
+    print(f"Found {len(articles)} articles from the last day")
+    
     for article in articles:
       if "_id" in article:
         article["_id"] = str(article["_id"])
+    
     return jsonify({"articles": articles[:50], "full_count": len(articles)}), 200
   except Exception as e:
     print("Error fetching articles:", str(e))
     return jsonify({"error": "failed to fetch articles", "details": str(e)}), 500
 
 
+@app.route("/articles/<article_id>", methods=["GET"])
+def get_article_by_id(article_id):
+  """GET /articles/<article_id> - Return a specific article by its MongoDB ObjectId."""
+  if rawArticleCollection is None:
+    return jsonify({"error": "MongoDB not configured (MONGODB_URI/MONGODB_DB)."}), 500
+  try:
+    # Convert string ID to ObjectId
+    article = rawArticleCollection.find_one({"_id": ObjectId(article_id)})
+    
+    if not article:
+      return jsonify({"error": "Article not found"}), 404
+    
+    # Convert ObjectId to string for JSON serialization
+    if "_id" in article:
+      article["_id"] = str(article["_id"])
+    
+    return jsonify({"article": article}), 200
+  except Exception as e:
+    print(f"Error fetching article {article_id}:", str(e))
+    return jsonify({"error": "Invalid article ID or fetch failed", "details": str(e)}), 400
 
-############# Users
 
 
-
+############# User routes #############s
 
 # @app.route("/articles", methods=["GET"])
 # def get_articles():
