@@ -99,14 +99,20 @@ def get_or_create_user():
     print("Fetching user with sub:", user_sub)
     user_doc = userCollection.find_one({"user_id": user_sub})
     print("Fetched user document:", user_doc)
-
+    
     if not user_doc:
+        # Determine role based on email domain
+        default_role = "annotator"
+        if user_email and "ft3.com" in user_email.lower():
+            default_role = "admin"
+            print(f"Auto-upgrading user to admin role (ft3.com email detected): {user_email}")
+        
         # Create a new user record on first login
         user_doc = {
             "user_id": user_sub,
             "email": user_email,
             "name": user_name,
-            "role": "annotator",  # default role
+            "role": default_role,
             "created_at": datetime.now(),
             "last_active_at": datetime.now(),
             "is_active": True,
@@ -135,10 +141,10 @@ def get_or_create_user():
     return jsonify({"user": user_doc}), 200
 
 
-@app.route("/users/list", methods=["GET"])
+@app.route("/user/list", methods=["POST"])
 # @requires_auth
 def list_all_users():
-    """GET /users/list - Return all users (admin only).
+    """POST /user/list - Return all users (admin only).
     
     Requires authentication and admin role.
     """
@@ -146,10 +152,20 @@ def list_all_users():
         return jsonify({"error": "MongoDB not configured"}), 500
     
     try:
-        # # Get the authenticated user's ID from JWT
+        # Get auth0_id from request body
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body must be JSON"}), 400
+        
+        user_sub = data.get("auth0_id")
+        
+        # # When @requires_auth is enabled, use JWT payload instead:
         # user_sub = g.user.get("sub")
         # if not user_sub:
         #     return jsonify({"error": "No user_id in JWT"}), 401
+        
+        if not user_sub:
+            return jsonify({"error": "auth0_id is required"}), 400
         
         # Fetch the requesting user's document to check their role
         requesting_user = userCollection.find_one({"user_id": user_sub})
