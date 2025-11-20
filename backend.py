@@ -1,6 +1,7 @@
 import json
 import os
 import hashlib
+import certifi
 from functools import wraps
 from flask import Flask, request, jsonify, g
 from pymongo import MongoClient
@@ -19,6 +20,9 @@ if os.path.exists(".env.local"):
 else:
     load_dotenv()  # fallback to .env
 app = Flask(__name__)
+
+# client = MongoClient(os.getenv("MONGODB_URI"))
+
 frontend_url = os.getenv("FRONTEND_URL")
 CORS(app,
      resources={r"/*": {
@@ -28,13 +32,10 @@ CORS(app,
          "supports_credentials": True
      }})
 
-# client = MongoClient(os.getenv("MONGODB_URI"))
-
 print("Backend started", flush=True)
-
-
 # cluster = 
-mongoClient = MongoClient(os.getenv("MONGODB_URI"))
+mongoClient = MongoClient(os.getenv("MONGODB_URI"), tlsCAFile=certifi.where())
+print("MongoDB connected:", mongoClient, flush=True)
 db = mongoClient.Articles
 pairingsCollection = db.pairings
 annotationsCollection = db.annotations
@@ -407,6 +408,42 @@ def ingest_latest_us():
   except Exception as e:
     print("Error ingesting US latest articles:", str(e))
     return jsonify({"error": "failed to ingest US latest", "details": str(e)}), 500
+
+@app.route("/admin/newsapi/search", methods=["POST"])
+def admin_newsapi_get():
+  """ Admin endpoint to test complex queries against EventRegistry News API."""
+  data = request.get_json()
+  if not data:
+    return jsonify({"error": "Request body must be JSON"}), 400
+  query = {
+    "$query": {
+      "$and": [
+        {
+          "keyword": "Trump",
+          "keywordLoc": "body"
+        },
+        {
+          "keyword": "Trump",
+          "keywordLoc": "title"
+        },
+        {
+          "sourceUri": "reuters.com"
+        },
+        {
+          "dateStart": "2025-11-13",
+          "dateEnd": "2025-11-20",
+          "lang": "eng"
+        }
+      ]
+    }
+  }
+  q = QueryArticlesIter.initWithComplexQuery(query)
+  # change maxItems to get the number of results that you want
+  for article in q.execQuery(er, maxItems=100):
+      print(article)
+      # Implement the logic for this endpoint
+      pass
+
 
 @app.route("/articles", methods=["GET"])
 def get_articles():
