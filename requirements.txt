@@ -2,6 +2,7 @@ python-dotenv
 # Database
 pymongo[srv]
 # Core Framework
+certifi
 flask
 flask-cors
 requests
