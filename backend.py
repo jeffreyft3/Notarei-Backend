@@ -19,9 +19,10 @@ if os.path.exists(".env.local"):
 else:
     load_dotenv()  # fallback to .env
 app = Flask(__name__)
+frontend_url = os.getenv("FRONTEND_URL")
 CORS(app,
      resources={r"/*": {
-         "origins": ["http://localhost:3000"],
+         "origins": [frontend_url],
          "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
          "allow_headers": ["Authorization", "Content-Type"],
          "supports_credentials": True
@@ -33,7 +34,7 @@ print("Backend started", flush=True)
 
 
 # cluster = 
-mongoClient = MongoClient(os.getenv("MONGODB_URI"))
+mongoClient = MongoClient(os.getenv("MONGODB_URI","MONGO_URL"))
 db = mongoClient.Articles
 rawArticlesCollection = db.rawArticles
 sentencesCollection = db.sentences
