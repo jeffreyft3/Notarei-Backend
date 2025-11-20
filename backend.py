@@ -34,8 +34,11 @@ print("Backend started", flush=True)
 
 
 # cluster = 
-mongoClient = MongoClient(os.getenv("MONGODB_URI","MONGO_URL"))
+mongoClient = MongoClient(os.getenv("MONGODB_URI"))
 db = mongoClient.Articles
+pairingsCollection = db.pairings
+annotationsCollection = db.annotations
+cleanArticlesCollection = db.cleanArticles
 rawArticlesCollection = db.rawArticles
 sentencesCollection = db.sentences
 # db = cluster[db_name] if cluster else None
@@ -129,6 +132,49 @@ def get_or_create_user():
         user_doc["_id"] = str(user_doc["_id"])
 
     return jsonify({"user": user_doc}), 200
+
+
+@app.route("/users/list", methods=["GET"])
+# @requires_auth
+def list_all_users():
+    """GET /users/list - Return all users (admin only).
+    
+    Requires authentication and admin role.
+    """
+    if userCollection is None:
+        return jsonify({"error": "MongoDB not configured"}), 500
+    
+    try:
+        # # Get the authenticated user's ID from JWT
+        # user_sub = g.user.get("sub")
+        # if not user_sub:
+        #     return jsonify({"error": "No user_id in JWT"}), 401
+        
+        # Fetch the requesting user's document to check their role
+        requesting_user = userCollection.find_one({"user_id": user_sub})
+        
+        if not requesting_user:
+            return jsonify({"error": "User not found"}), 404
+        
+        # Verify the user has admin or master role
+        user_role = requesting_user.get("role", "")
+        if user_role not in ["admin", "master"]:
+            return jsonify({"error": "Unauthorized. Admin role required."}), 403
+        
+        # Fetch all users
+        users = list(userCollection.find())
+        
+        # Convert ObjectId to string for JSON serialization
+        for user in users:
+            if "_id" in user:
+                user["_id"] = str(user["_id"])
+        
+        return jsonify({"users": users, "count": len(users)}), 200
+        
+    except Exception as e:
+        print(f"Error listing users: {str(e)}")
+        return jsonify({"error": "Failed to list users", "details": str(e)}), 500
+
 
 # print("MongoDB connected:", bool(db), "DB:", db)
 
@@ -418,7 +464,79 @@ def get_article_by_id(article_id):
 
 
 
-############# User routes #############s
+
+
+
+############# Pairing routes #############
+
+@app.route("/pairings/assign", methods=["POST"])
+def assign_pairing():
+  """POST /pairings/assign - Create a new pairing assignment.
+  
+  Request body:
+    {
+      "article_id": "art_abc123",
+      "user1_id": "user_a1",
+      "user2_id": "user_b2"
+    }
+  
+  Returns:
+    {
+      "pairing": { ... newly created pairing document ... }
+    }
+  """
+  if pairingsCollection is None:
+    return jsonify({"error": "MongoDB not configured"}), 500
+  
+  try:
+    data = request.get_json()
+    if not data:
+      return jsonify({"error": "Request body must be JSON"}), 400
+    
+    article_id = data.get("article_id")
+    user1_id = data.get("user1_id")
+    user2_id = data.get("user2_id")
+    
+    if not article_id or not user1_id or not user2_id:
+      return jsonify({"error": "article_id, user1_id, and user2_id are required"}), 400
+    
+    # Generate a unique pairing_id (you can customize this format)
+    import uuid
+    pairing_id = f"pair_{uuid.uuid4().hex[:6]}"
+    
+    # Create new pairing document with empty fields
+    new_pairing = {
+      "pairing_id": pairing_id,
+      "article_id": article_id,
+      "created_at": datetime.now().isoformat(),
+      "status": "assigned",  # Start with "assigned" status, not "completed"
+      
+      "user1_id": user1_id,
+      "user2_id": user2_id,
+      
+      "user1_submitted_at": None,
+      "user2_submitted_at": None,
+      
+      "agreed_sentences": [],
+      "disagreed_sentences": []
+    }
+    
+    # Insert into MongoDB
+    result = pairingsCollection.insert_one(new_pairing)
+    
+    # Convert ObjectId to string for response
+    new_pairing["_id"] = str(result.inserted_id)
+    
+    print(f"Created new pairing: {pairing_id} for article {article_id}")
+    
+    return jsonify({"pairing": new_pairing}), 201
+    
+  except Exception as e:
+    print(f"Error creating pairing: {str(e)}")
+    return jsonify({"error": "Failed to create pairing", "details": str(e)}), 500
+
+
+############# User routes #############
 
 # @app.route("/articles", methods=["GET"])
 # def get_articles():
