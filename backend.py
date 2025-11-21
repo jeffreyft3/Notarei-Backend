@@ -431,6 +431,34 @@ def admin_newsapi_get():
   data = request.get_json()
   if not data:
     return jsonify({"error": "Request body must be JSON"}), 400
+  fullQuery = {
+    "query": {
+    "$query": {
+      "$and": [
+        {
+          "keyword": "Trump",
+          "keywordLoc": "body"
+        },
+        {
+          "keyword": "Trump",
+          "keywordLoc": "title"
+        },
+        {
+          "sourceUri": "reuters.com"
+        },
+        {
+          "dateStart": "2025-11-13",
+          "dateEnd": "2025-11-20",
+          "lang": "eng"
+        }
+      ]
+
+    }
+    },
+    "resultsType": "articles",
+    "articlesSortBy": "date",
+    "apiKey": os.getenv("NEWSAPI_KEY"),
+  }
   query = {
     "$query": {
       "$and": [
@@ -451,19 +479,159 @@ def admin_newsapi_get():
           "lang": "eng"
         }
       ]
+
     }
   }
-  q = QueryArticlesIter.initWithComplexQuery(query)
-  # change maxItems to get the number of results that you want
-  for article in q.execQuery(er, maxItems=100):
-      print(article)
-      # Implement the logic for this endpoint
-      pass
+  """POST /newsapi/search - Execute custom EventRegistry query and return results.
+  
+  Request body:
+    {
+      "query": {
+        "$query": {
+          "$and": [
+            {"keyword": "Trump", "keywordLoc": "body"},
+            {"keyword": "Trump", "keywordLoc": "title"},
+            {"sourceUri": "reuters.com"},
+            {"dateStart": "2025-11-13", "dateEnd": "2025-11-20", "lang": "eng"}
+          ]
+        }
+      },
+      "maxItems": 100  // optional, default 100
+    }
+  
+  Returns:
+    {
+      "articles": [...],
+      "count": <number of articles returned>
+    }
+  """
+  if not os.getenv("NEWSAPI_KEY"):
+    return jsonify({"error": "EventRegistry API key not configured (NEWSAPI_KEY)."}), 500
+  
+  try:
+    data = request.get_json()
+    if not data:
+      return jsonify({"error": "Request body must be JSON"}), 400
+    
+    query = data.get("query")
+    if not query:
+      return jsonify({"error": "query field is required"}), 400
+    
+    # Validate query structure
+    if "$query" not in query or "$and" not in query["$query"]:
+      return jsonify({"error": "Invalid query structure. Expected {\"$query\": {\"$and\": [...]}}"}), 400
+    
+    # Get maxItems from request or use default
+    max_items = data.get("maxItems", 100)
+    try:
+      max_items = int(max_items)
+      max_items = min(max(1, max_items), 500)  # Clamp between 1 and 500
+    except (ValueError, TypeError):
+      max_items = 100
+    
+    # Execute the query
+    q_iter = QueryArticlesIter.initWithComplexQuery(query)
+    articles = []
+    
+    for article in q_iter.execQuery(er, maxItems=max_items):
+      try:
+        # Convert to dict if needed
+        article_dict = dict(article) if not isinstance(article, dict) else article
+        articles.append(article_dict)
+      except Exception as e:
+        print(f"Error processing article: {str(e)}")
+        continue
+    
+    print(f"NewsAPI search returned {len(articles)} articles")
+    
+    return jsonify({
+      "articles": articles,
+      "count": len(articles)
+    }), 200
+    
+  except Exception as e:
+    print(f"Error executing NewsAPI search: {str(e)}")
+    return jsonify({"error": "Failed to execute search", "details": str(e)}), 500
+
+
+
+@app.route("/newsapi/search", methods=["POST"])
+def newsapi_search():
+  """POST /newsapi/search - Execute custom EventRegistry query and return results.
+  
+  Request body:
+    {
+      "query": {
+        "$query": {
+          "$and": [
+            {"keyword": "Trump", "keywordLoc": "body"},
+            {"keyword": "Trump", "keywordLoc": "title"},
+            {"sourceUri": "reuters.com"},
+            {"dateStart": "2025-11-13", "dateEnd": "2025-11-20", "lang": "eng"}
+          ]
+        }
+      },
+      "maxItems": 100  // optional, default 100
+    }
+  
+  Returns:
+    {
+      "articles": [...],
+      "count": <number of articles returned>
+    }
+  """
+  if not os.getenv("NEWSAPI_KEY"):
+    return jsonify({"error": "EventRegistry API key not configured (NEWSAPI_KEY)."}), 500
+  
+  try:
+    data = request.get_json()
+    if not data:
+      return jsonify({"error": "Request body must be JSON"}), 400
+    
+    query = data.get("query")
+    if not query:
+      return jsonify({"error": "query field is required"}), 400
+    
+    # Validate query structure
+    if "$query" not in query or "$and" not in query["$query"]:
+      return jsonify({"error": "Invalid query structure. Expected {\"$query\": {\"$and\": [...]}}"}), 400
+    
+    # Get maxItems from request or use default
+    max_items = data.get("maxItems", 100)
+    try:
+      max_items = int(max_items)
+      max_items = min(max(1, max_items), 500)  # Clamp between 1 and 500
+    except (ValueError, TypeError):
+      max_items = 100
+    
+    # Execute the query
+    q_iter = QueryArticlesIter.initWithComplexQuery(query)
+    articles = []
+    
+    for article in q_iter.execQuery(er, maxItems=max_items):
+      try:
+        # Convert to dict if needed
+        article_dict = dict(article) if not isinstance(article, dict) else article
+        articles.append(article_dict)
+      except Exception as e:
+        print(f"Error processing article: {str(e)}")
+        continue
+    
+    print(f"NewsAPI search returned {len(articles)} articles")
+    
+    return jsonify({
+      "articles": articles,
+      "count": len(articles)
+    }), 200
+    
+  except Exception as e:
+    print(f"Error executing NewsAPI search: {str(e)}")
+    return jsonify({"error": "Failed to execute search", "details": str(e)}), 500
 
 
 @app.route("/articles", methods=["GET"])
 def get_articles():
-  """GET /articles - Return articles from the last day based on published_at field."""
+  """GET /articles - Return articles from the last day, evenly split across different sources."""
   if rawArticleCollection is None:
     return jsonify({"error": "MongoDB not configured (MONGODB_URI/MONGODB_DB)."}), 500
   try:
@@ -471,24 +639,44 @@ def get_articles():
     one_day_ago = datetime.now() - timedelta(days=1)
     one_day_ago_str = one_day_ago.isoformat()
     
-    # Query for articles published in the last day
-    # Support both ISO string and datetime formats
-    query = {
-      "$or": [
-        {"date": {"$gte": one_day_ago_str}},
-        {"dateTime": {"$gte": one_day_ago_str}},
-        {"published_at": {"$gte": one_day_ago_str}}
-      ]
-    }
+    # Define target sources
+    target_sources = ["apnews.com", "foxnews.com", "aljazeera.com"]
     
-    articles = list(rawArticleCollection.find(query).sort("dateTime", -1))
-    print(f"Found {len(articles)} articles from the last day")
+    # Calculate how many articles to take from each source
+    articles_per_source = 50 // len(target_sources)  # Evenly split 50 articles
+    remainder = 50 % len(target_sources)
     
-    for article in articles:
+    balanced_articles = []
+    total_found = 0
+    
+    # Loop through each source and query MongoDB directly
+    for idx, source in enumerate(target_sources):
+      count = articles_per_source + (1 if idx < remainder else 0)
+      
+      # Build query for this specific source and date range
+      source_query = {
+        "source_uri": source,
+        "$or": [
+          {"date": {"$gte": one_day_ago_str}},
+          {"dateTime": {"$gte": one_day_ago_str}},
+          {"published_at": {"$gte": one_day_ago_str}}
+        ]
+      }
+      
+      # Fetch articles from this source
+      source_articles = list(rawArticleCollection.find(source_query).sort("dateTime", -1).limit(count))
+      print(f"Found {len(source_articles)} articles from {source}")
+      
+      balanced_articles.extend(source_articles)
+      total_found += len(source_articles)
+    
+    # Convert ObjectId to string for JSON serialization
+    for article in balanced_articles:
       if "_id" in article:
         article["_id"] = str(article["_id"])
     
-    return jsonify({"articles": articles[:50], "full_count": len(articles)}), 200
+    print(f"Returning {len(balanced_articles)} articles balanced across {len(target_sources)} sources")
+    return jsonify({"articles": balanced_articles, "full_count": total_found}), 200
   except Exception as e:
     print("Error fetching articles:", str(e))
     return jsonify({"error": "failed to fetch articles", "details": str(e)}), 500
@@ -514,6 +702,94 @@ def get_article_by_id(article_id):
   except Exception as e:
     print(f"Error fetching article {article_id}:", str(e))
     return jsonify({"error": "Invalid article ID or fetch failed", "details": str(e)}), 400
+
+
+@app.route("/articles/search", methods=["GET"])
+def search_articles():
+  """GET /articles/search - Search articles by keyword with pagination.
+  
+  Query params:
+    - keyword: search term (required)
+    - page: page number (default: 1)
+    - limit: results per page (default: 20, max: 100)
+  
+  Returns:
+    {
+      "articles": [...],
+      "pagination": {
+        "page": 1,
+        "limit": 20,
+        "total": 150,
+        "total_pages": 8,
+        "has_next": true,
+        "has_prev": false
+      }
+    }
+  """
+  if rawArticleCollection is None:
+    return jsonify({"error": "MongoDB not configured"}), 500
+  
+  try:
+    # Get query parameters
+    keyword = request.args.get("keyword", "").strip()
+    if not keyword:
+      return jsonify({"error": "keyword parameter is required"}), 400
+    
+    # Pagination parameters
+    try:
+      page = max(1, int(request.args.get("page", "1")))
+      limit = min(max(1, int(request.args.get("limit", "20"))), 100)
+    except ValueError:
+      page = 1
+      limit = 20
+    
+    skip = (page - 1) * limit
+    
+    # Build search query (case-insensitive search in title and body)
+    search_query = {
+      "$or": [
+        {"title": {"$regex": keyword, "$options": "i"}},
+        {"body": {"$regex": keyword, "$options": "i"}},
+        {"source.title": {"$regex": keyword, "$options": "i"}}
+      ]
+    }
+    
+    # Get total count for pagination
+    total_count = rawArticleCollection.count_documents(search_query)
+    total_pages = (total_count + limit - 1) // limit  # Ceiling division
+    
+    # Fetch paginated results
+    articles = list(
+      rawArticleCollection
+        .find(search_query)
+        .sort("dateTime", -1)
+        .skip(skip)
+        .limit(limit)
+    )
+    
+    # Convert ObjectId to string for JSON serialization
+    for article in articles:
+      if "_id" in article:
+        article["_id"] = str(article["_id"])
+    
+    print(f"Search for '{keyword}': found {total_count} articles, returning page {page}/{total_pages}")
+    
+    return jsonify({
+      "articles": articles,
+      "pagination": {
+        "page": page,
+        "limit": limit,
+        "total": total_count,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_prev": page > 1
+      }
+    }), 200
+    
+  except Exception as e:
+    print(f"Error searching articles: {str(e)}")
+    return jsonify({"error": "Failed to search articles", "details": str(e)}), 500
+
 
 
 
@@ -556,6 +832,8 @@ def assign_pairing():
     # Generate a unique pairing_id (you can customize this format)
     import uuid
     pairing_id = f"pair_{uuid.uuid4().hex[:6]}"
+    annotation_id_user1 = f"ann_{uuid.uuid4().hex[:6]}"
+    annotation_id_user2 = f"ann_{uuid.uuid4().hex[:6]}"
     
     # Create new pairing document with empty fields
     new_pairing = {
@@ -569,24 +847,88 @@ def assign_pairing():
       
       "user1_submitted_at": None,
       "user2_submitted_at": None,
+      "combined_ready": False,
+      "combined_at": None,
+      "user1_annotation_id": annotation_id_user1,
+      "user2_annotation_id": annotation_id_user2,
       
       "agreed_sentences": [],
       "disagreed_sentences": []
     }
     
+    # Create initial annotation objects for both users
+    new_annotation_user1 = {
+      "annotation_id": annotation_id_user1,
+      "article_id": article_id,
+      "user_id": user1_id,
+      "created_at": datetime.now().isoformat(),
+      "submitted_at": None,
+      "status": "not_started",
+      "sentences": []
+    }
+    
+    new_annotation_user2 = {
+      "annotation_id": annotation_id_user2,
+      "article_id": article_id,
+      "user_id": user2_id,
+      "created_at": datetime.now().isoformat(),
+      "submitted_at": None,
+      "status": "not_started",
+      "sentences": []
+    }
+    
     # Insert into MongoDB
     result = pairingsCollection.insert_one(new_pairing)
+    annotation_result1 = annotationsCollection.insert_one(new_annotation_user1)
+    annotation_result2 = annotationsCollection.insert_one(new_annotation_user2)
     
     # Convert ObjectId to string for response
     new_pairing["_id"] = str(result.inserted_id)
+    new_annotation_user1["_id"] = str(annotation_result1.inserted_id)
+    new_annotation_user2["_id"] = str(annotation_result2.inserted_id)
     
     print(f"Created new pairing: {pairing_id} for article {article_id}")
+    print(f"Created annotations: {annotation_id_user1}, {annotation_id_user2}")
     
-    return jsonify({"pairing": new_pairing}), 201
+    return jsonify({
+      "pairing": new_pairing,
+      "annotations": {
+        "user1": new_annotation_user1,
+        "user2": new_annotation_user2
+      }
+    }), 201
     
   except Exception as e:
     print(f"Error creating pairing: {str(e)}")
     return jsonify({"error": "Failed to create pairing", "details": str(e)}), 500
+
+
+
+
+
+######### Annotations Routes #############
+
+
+@app.route("/annotations/submit", methods=["POST"])
+def submit_annotation():
+  data = request.get_json()
+  if not data:
+    return jsonify({"error": "Request body must be JSON"}), 400
+
+  annotation_id = data.get("annotation_id")
+  sentences = data.get("sentences", [])
+
+  result = annotationsCollection.find({"annotation_id": annotation_id}).update_one(
+    {"$set": {sentences : sentences,
+              "submitted_at": datetime.now().isoformat(),
+              "status": "submitted"}}
+  )
+  if result.matched_count == 0:
+    return jsonify({"error": "Annotation not found"}), 404
+    
+  return jsonify({"response": "Annotation submitted successfully."}), 201
+
+
 
 
 ############# User routes #############
